@@ -31,46 +31,80 @@
 
 {% block scripts %}
 <script>
-    const roomName = "{{ request.user.username }}_{{ other_user.username }}";
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const chatSocket = new WebSocket(
-        wsProtocol + '//' + window.location.host + '/ws/chat/' + roomName + '/'
-    );
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
 
-    chatSocket.onmessage = function(e) {
-        const data = JSON.parse(e.data);
-        const messageContainer = document.getElementById('message-container');
+    const messageContainer = document.getElementById('message-container');
+    const messageInput = document.getElementById('chat-message-input');
+    const submitButton = document.getElementById('chat-message-submit');
+    const csrfToken = getCookie('csrftoken');
+    const otherUsername = "{{ other_user.username }}";
+
+    function addMessage(message, isSent) {
         const messageDiv = document.createElement('div');
         messageDiv.classList.add('message');
-        messageDiv.classList.add(data.sender === "{{ request.user.username }}" ? 'sent' : 'received');
-        messageDiv.textContent = data.message;
+        messageDiv.classList.add(isSent ? 'sent' : 'received');
+        messageDiv.textContent = message;
         messageContainer.appendChild(messageDiv);
         messageContainer.scrollTop = messageContainer.scrollHeight;
-    };
+    }
 
-    chatSocket.onclose = function(e) {
-        console.error('Chat socket closed unexpectedly');
-    };
+    function sendMessage() {
+        const message = messageInput.value.trim();
+        if (!message) return;
 
-    document.querySelector('#chat-message-input').focus();
-    document.querySelector('#chat-message-input').onkeyup = function(e) {
-        if (e.keyCode === 13) {
-            document.querySelector('#chat-message-submit').click();
+        fetch('/chat/send_message/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+            },
+            body: JSON.stringify({
+                receiver: otherUsername,
+                message: message
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                addMessage(message, true);
+                messageInput.value = '';
+            }
+        });
+    }
+
+    function updateMessages() {
+        fetch(`/chat/get_messages/${otherUsername}/`)
+        .then(response => response.json())
+        .then(data => {
+            messageContainer.innerHTML = '';
+            data.messages.forEach(msg => {
+                addMessage(msg.message, msg.sender === "{{ request.user.username }}");
+            });
+        });
+    }
+
+    messageInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            sendMessage();
         }
-    };
+    });
 
-    document.querySelector('#chat-message-submit').onclick = function(e) {
-        const messageInputDom = document.querySelector('#chat-message-input');
-        const message = messageInputDom.value;
-        chatSocket.send(JSON.stringify({
-            'message': message,
-            'receiver': "{{ other_user.username }}"
-        }));
-        messageInputDom.value = '';
-    };
+    submitButton.addEventListener('click', sendMessage);
 
-    // Scroll to bottom on load
-    const messageContainer = document.getElementById('message-container');
-    messageContainer.scrollTop = messageContainer.scrollHeight;
+    // Poll for new messages every 2 seconds
+    setInterval(updateMessages, 2000);
 </script>
 {% endblock %}
